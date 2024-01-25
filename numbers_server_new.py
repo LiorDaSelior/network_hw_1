@@ -39,6 +39,8 @@ writable_socket_list = []
 
 # shorthand func
 def send_msg(target_socket: sk.socket, msg: str): # Send str msg to socket - add msg to data struct and begin sending buffer. Socket must be writable
+    readable_socket_list.remove(socket)
+    writable_socket_list.append(socket) 
     sk_msg = ns.OutgoingSocketMessage(msg)
     outgoing_msg_dict[target_socket] = sk_msg
     target_socket.send(sk_msg.size.to_bytes(4, 'big'))
@@ -52,6 +54,9 @@ def recv_msg(source_socket: sk.socket): # Get str msg from socket - add msg to d
     incoming_msg_dict[source_socket] = sk_msg
     return True
 
+def disconnect_socket(target_socket: sk.socket, msg: str = "Error - Disconnected from server."):
+    disconnected_socket_set.add(target_socket)
+    send_msg(target_socket, msg)
 
 while True:
     readable, writable, _ = sl.select(readable_socket_list, writable_socket_list, [], 10)
@@ -71,14 +76,13 @@ while True:
             if socket in incoming_msg_dict:
                 if incoming_msg_dict[socket].is_complete(): # if server received all 'logging details' bytes -> get msg content as string for login analysis
                     login_cred = (incoming_msg_dict[socket].data).decode()
-                    incoming_msg_dict.pop(socket) # after extracting the msg content, remove msg from data struct. Now we expect to write response to socket, therefore we turn it from readable to writable
-                    readable_socket_list.remove(socket)
-                    writable_socket_list.append(socket) 
+                    incoming_msg_dict.pop(socket) # after extracting the msg content, remove msg from data struct. Now we expect to write response to socket
+                    #readable_socket_list.remove(socket)
+                    #writable_socket_list.append(socket) 
                     res = ns.login(login_cred, ns.get_user_info(user_data_filename)) # extract login credentials and execute login process
                     if res is None: # res = None <=> login format is wrong. Disconnect socket - send final msg and remove from all relevant data struct (After writing the msg, socket won't be readable, cause it's added to disconnected_socket_set)
                         logging_socket_set.remove(socket)
-                        disconnected_socket_set.add(socket)
-                        send_msg(socket, "Error - Disconnected from server.")                  
+                        disconnect_socket(socket)                
                     elif res == True: # res = True <=> login format is right, username and password are matching. Add user to connected_socket_set
                         user_name = ns.get_cred(login_cred)[0]
                         logging_socket_set.remove(socket)
@@ -90,9 +94,7 @@ while True:
             else: # if server didn't recognize incoming msg from from socket <=> expects socket to send size of 'logging details' data
                 if not recv_msg(socket): # if False -> response size is 0, therefore disconnect socket
                     logging_socket_set.remove(socket)
-                    disconnected_socket_set.add(socket)
-                    writable_socket_list.append(socket) 
-                    send_msg(socket, "Error - Disconnected from server.")
+                    disconnect_socket(socket)
     for socket in writable:
         if socket in outgoing_msg_dict: # if server sends socket buffered messages -> continue sending remaining data
             socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
