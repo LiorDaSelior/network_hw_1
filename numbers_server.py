@@ -2,25 +2,19 @@ import numbers_service as ns
 import select as sl
 import socket as sk
 import sys
-
-#! TODO - What is protocol
-#! TODO - Errors
+from typing import Dict, Set
 
 HOST = ""
 DEFAULT_PORT = 1337
+DATA_BANDWIDTH = 4
 
-def get_user_info(user_data_filename):
-    res = {}
-    with open(user_data_filename, 'r', encoding="utf-8") as user_data_file:
-        for row in user_data_file.read().splitlines():
-            row_iter = row.split('\t')
-            res[row_iter[0]] = row_iter[1]
-    return res
-
-user_data_filename = ""
-port = ""
-waiting_socket_set = set()
-connected_socket_set = set()
+user_data_filename : str = ""
+port : int = DEFAULT_PORT
+logging_socket_set : Set[sk.socket] = set() # set to handle all sockets which init. login
+connected_socket_set : Set[sk.socket] = set() # set to handle all sockets which completed login
+disconnected_socket_set : Set[sk.socket] = set() # set to handle all sockets which disconnected from server, are receiving final message and closing
+incoming_msg_dict : Dict[sk.socket, ns.IncomingSocketMessage] = {} # dict to handle all incoming messages
+outgoing_msg_dict : Dict[sk.socket, ns.OutgoingSocketMessage] = {} # dict to handle all outgoing messages
 
 if len(sys.argv) == 2:
     user_data_filename = sys.argv[1]
@@ -29,56 +23,102 @@ elif  len(sys.argv) == 3:
     user_data_filename = sys.argv[1]
     port = int(sys.argv[2])
 else:
-    raise AttributeError("Command line arguments are invalid")
+    raise AttributeError("Server set up failed - Arguments are invalid")
 
+#try:
 listener_socket = sk.socket(sk.AF_INET, sk.SOCK_STREAM)
 listener_socket.bind((HOST, port))
-listener_socket.listen() #? is there a limit
-socket_list = [listener_socket]
+listener_socket.listen()
+#except: - #! TODO - Check for errors during socket creation
+readable_socket_list = [listener_socket]
+writable_socket_list = []
+
+
+# shorthand functions for repeating methods
+def send_msg(target_socket: sk.socket, msg: str): # Send str msg to socket - add msg to data struct and begin sending buffer
+    if target_socket in readable_socket_list:
+        readable_socket_list.remove(target_socket)
+    if target_socket not in writable_socket_list:
+        writable_socket_list.append(target_socket) 
+    sk_msg = ns.OutgoingSocketMessage(msg)
+    outgoing_msg_dict[target_socket] = sk_msg
+    target_socket.send(sk_msg.size.to_bytes(4, 'big'))
+        
+def recv_msg(source_socket: sk.socket): # Get str msg from socket - add msg to data struct and begin receiving buffer. Return False <=> recv size is 0. Socket must be readable
+    size_in_bytes = source_socket.recv(4)
+    size = int.from_bytes(size_in_bytes, "big")
+    if size == 0:
+        return False
+    sk_msg = ns.IncomingSocketMessage(size)
+    incoming_msg_dict[source_socket] = sk_msg
+    return True
+
+def disconnect_socket(target_socket: sk.socket, msg: str = "Disconnected from server."):
+    disconnected_socket_set.add(target_socket)
+    send_msg(target_socket, msg)
+
 while True:
-    readable, _, _ = sl.select(socket_list, [], [])
+    readable, writable, _ = sl.select(readable_socket_list, writable_socket_list, [], 10)
     
-    for socket in readable:
-        if socket == listener_socket:
+    for socket in readable: 
+        if socket in incoming_msg_dict: # if currently receiving buffered message from the socket -> add received data to data struct
+            if not incoming_msg_dict[socket].is_complete():
+                incoming_msg_dict[socket].add_data(socket.recv(DATA_BANDWIDTH))
+        
+        if socket == listener_socket: # init. connection
             connect_socket, addr = listener_socket.accept()
-            socket_list.append(connect_socket)
-            waiting_socket_set.add(connect_socket)
-            welcome_msg = "Welcome! Please log in."
-            connect_socket.send(welcome_msg.encode("utf-8"))
+            logging_socket_set.add(connect_socket) # init. login process. When sending welcome msg, turns connection socket to writable
+            send_msg(connect_socket, "Welcome! Please log in.")
             
-        elif socket in waiting_socket_set:
-            data = socket.recv(1024)
-            message = data.decode(encoding = "utf-8")
-            user_cred = message.split(" ") #! TODO - Redefine login protocol
-            user = user_cred[0]
-            password = user_cred[1]
-            user_data = get_user_info(user_data_filename)
-            if user in user_data and user_data[user] == password:
-                waiting_socket_set.remove(socket)
-                connected_socket_set.add(socket)
-                login_msg = f"Hi {user}, good to see you."
-                connect_socket.send(login_msg.encode("utf-8"))
-            else:
-                fail_msg = "Failed to login."
-                connect_socket.send(fail_msg.encode("utf-8"))
-            
+        elif socket in logging_socket_set:
+            if socket in incoming_msg_dict:
+                if incoming_msg_dict[socket].is_complete(): # if server received all 'logging details' bytes -> get msg content as string for login analysis
+                    login_cred = (incoming_msg_dict[socket].data).decode()
+                    incoming_msg_dict.pop(socket) # after extracting the msg content, remove msg from data struct. Now we expect to write response to socket 
+                    res = ns.login(login_cred, ns.get_user_info(user_data_filename)) # extract login credentials and execute login process
+                    if res is None: # res = None <=> login format is wrong. Disconnect socket - send final msg and remove from all relevant data struct (After writing the msg, socket won't be readable, cause it's added to disconnected_socket_set)
+                        logging_socket_set.remove(socket)
+                        disconnect_socket(socket)                
+                    elif res == True: # res = True <=> login format is right, username and password are matching. Add user to connected_socket_set
+                        user_name = ns.get_cred(login_cred)[0]
+                        logging_socket_set.remove(socket)
+                        connected_socket_set.add(socket)
+                        send_msg(socket, f"Hi {user_name}, good to see you.")
+                    else: # res = False <=> login format is right, username OR password are wrong. Wait for another attempt
+                        send_msg(socket, "Login Failed.")
+                    
+            else: # if server didn't recognize incoming msg from from socket <=> expects socket to send size of 'logging details' data
+                if not recv_msg(socket): # if False -> response size is 0, therefore disconnect socket
+                    logging_socket_set.remove(socket)
+                    disconnect_socket(socket)
+                    
         elif socket in connected_socket_set:
-            data = socket.recv(1024)
-            cmd = data.decode(encoding = "utf-8")
-            cmd_arr = cmd.split(":")
-            cmd_name = cmd_arr[0]
-            
-            if cmd == "quit" or cmd_name not in ns.command_list:
-                connected_socket_set.remove(socket)
-                socket_list.remove(socket)
-                socket.close()
-            else:
-                #try:
-                cmd_args = ((cmd_arr[1])[1:]).split(" ")
-                connect_socket.send(ns.execute(cmd_name, cmd_args).encode("utf-8"))
-                #except (ns.InvalidCommandArgumentException, ValueError):
-                #    connected_socket_set.remove(socket)
-                #    socket_list.remove(socket)
-                #    socket.close()
-                
-            
+            if socket in incoming_msg_dict:
+                if incoming_msg_dict[socket].is_complete():
+                    cmd = (incoming_msg_dict[socket].data).decode()
+                    incoming_msg_dict.pop(socket)
+                    res = ns.execute(cmd)
+                    if res is None: # res = None <=> command is not recognized OR is quit, disconnect user
+                        connected_socket_set.remove(socket)
+                        disconnect_socket(socket)
+                    else: # <=> command is recognized and executed, send response
+                        send_msg(socket, "response: " + res + ".")
+                    
+            else: # if server didn't recognize incoming msg from from socket <=> expects socket to send size of 'command' data
+                if not recv_msg(socket): # if False -> response size is 0, therefore disconnect socket
+                    connected_socket_set.remove(socket)
+                    disconnect_socket(socket)
+    
+    for socket in writable:
+        if socket in outgoing_msg_dict: # if server sends socket buffered messages -> continue sending remaining data
+            socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
+            if outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable
+                outgoing_msg_dict.pop(socket)
+                writable_socket_list.remove(socket)
+                if socket in disconnected_socket_set: # if socket is not disconnected -> server expects to receive data from socket after writing to it, therefore turn socket readable
+                    disconnected_socket_set.remove(socket)
+                    socket.close()
+                else:
+                    readable_socket_list.append(socket)
+
+                    

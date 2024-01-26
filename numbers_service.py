@@ -1,11 +1,8 @@
-#class InvalidCommandArgumentException(Exception):
-#    pass
-
+# classes and methods of message handling:
 class SocketMessage():
     def __init__(self, size: int, data: bytes) -> None:
         self.data = data
         self.size = size
-        
         
 class IncomingSocketMessage(SocketMessage):
     def __init__(self, size: int) -> None:
@@ -16,7 +13,6 @@ class IncomingSocketMessage(SocketMessage):
         
     def is_complete(self):
         return self.size == len(self.data)
-        
         
 class OutgoingSocketMessage(SocketMessage):
     def __init__(self, msg: str) -> None:
@@ -32,6 +28,7 @@ class OutgoingSocketMessage(SocketMessage):
         return len(self.data) == 0
 
 
+# methods for user info and login management:
 def get_user_info(user_data_filename):
     res = {}
     with open(user_data_filename, 'r', encoding="utf-8") as user_data_file:
@@ -52,8 +49,6 @@ def login(user_cred_str, user_data):
     return False
 
 def get_cred(user_cred_str): # return None if format is invalid, otherwise return (user, password) tuple (this also accounts for quit)
-    #"User: user1\nPassword: password1"
-    #try:
     user_cred_arr = user_cred_str.split('\n')
     if len(user_cred_arr) != 2:
         return None
@@ -78,14 +73,8 @@ def get_cred(user_cred_str): # return None if format is invalid, otherwise retur
         return None
     
     return (user_name, user_password)
-    #except:
-    #return None
 
-
-
-
-
-
+# methods for handling user commands:
 def calculate(x, op, y):
     if op == '-':
         return x - y
@@ -95,8 +84,11 @@ def calculate(x, op, y):
         return x / y
     elif op == '*':
         return x * y
+    else:
+        raise AttributeError()
     
 def is_palindrome(x):
+    x = str(x)
     i = 0
     m = len(x)
     while i < m / 2:
@@ -116,9 +108,7 @@ def is_prime(x):
             return False
     return True
 
-command_list = ["calculate", "is_palindrome", "is_prime"]
-
-def execute(cmd_name, cmd_args):
+def execute(cmd_name, cmd_args): # Assumption: Command and arguments are valid, because user program checks for errors and invalid commands, therefore no error handling
     res = ""
     if cmd_name == "calculate":
         res = calculate(int(cmd_args[0]), cmd_args[1], int(cmd_args[2]))
@@ -129,16 +119,13 @@ def execute(cmd_name, cmd_args):
     elif cmd_name == "is_prime":
         res = is_prime(int(cmd_args[0]))
         res = "Yes" if res else "No"
+    else: # command is quit or unknown
+        return None
     return res
 
-def check_cmd_arguments(cmd_name, cmd_args): #! TODO - Correctness Check
-    if cmd_name == "calculate":
-        if len(cmd_args) != 3:
-            return False
-    if cmd_name == "is_palindrome":
-        if len(cmd_args) != 1 or not cmd_args[0].isdigit():
-            return False
-    if cmd_name == "is_prime":
-        if len(cmd_args) != 1 or not cmd_args[0].isdigit():
-            return False
-    return True
+def check_cmd_argument_amount(cmd_name, cmd_args): # check arguments format correctness
+    check_dict = {"calculate": 3, "is_palindrome": 1, "is_prime": 1}
+    for key in check_dict.keys():
+        if cmd_name == key:
+            if len(cmd_args) != check_dict[key]:
+                raise AttributeError()
