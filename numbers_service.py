@@ -81,7 +81,7 @@ def calculate(x, op, y):
     elif  op == '+':
         return x + y
     elif op == '/':
-        return x / y
+        return round((x / y) * 100) / 100.0
     elif op == '*':
         return x * y
     else:
@@ -94,6 +94,7 @@ def is_palindrome(x):
     while i < m / 2:
         if x[i] != x[(m-1)-i]:
             return False
+        i += 1
     return True
 
 def is_prime(x):
@@ -108,7 +109,12 @@ def is_prime(x):
             return False
     return True
 
-def execute(cmd_name, cmd_args): # Assumption: Command and arguments are valid, because user program checks for errors and invalid commands, therefore no error handling
+def execute(cmd): # Assumption: Command and it's arguments are valid, because user program checks for errors and invalid commands, therefore no error handling
+    cmd_arr = cmd.split(": ")
+    if len(cmd_arr) == 1: # command is in the right format ([cmd_name]) but is unknown to server - also account for quit command
+        return None
+    cmd_name = cmd_arr[0]
+    cmd_args = ((cmd_arr[1])).split(" ")
     res = ""
     if cmd_name == "calculate":
         res = calculate(int(cmd_args[0]), cmd_args[1], int(cmd_args[2]))
@@ -119,11 +125,16 @@ def execute(cmd_name, cmd_args): # Assumption: Command and arguments are valid, 
     elif cmd_name == "is_prime":
         res = is_prime(int(cmd_args[0]))
         res = "Yes" if res else "No"
-    else: # command is quit or unknown
+    else: # command is in the right format ([cmd_name]: [argument1] [argument2]... [argumentN]) but is unknown to server
         return None
     return res
 
-def check_cmd_argument_amount(cmd_name, cmd_args): # check arguments format correctness
+def check_cmd_argument_amount(cmd): # check arguments format correctness
+    if cmd == "quit":
+        return
+    cmd_arr = cmd.split(": ")
+    cmd_name = cmd_arr[0]
+    cmd_args = ((cmd_arr[1])).split(" ")
     check_dict = {"calculate": 3, "is_palindrome": 1, "is_prime": 1}
     for key in check_dict.keys():
         if cmd_name == key:

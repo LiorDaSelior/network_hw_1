@@ -111,8 +111,12 @@ while True:
     
     for socket in writable:
         if socket in outgoing_msg_dict: # if server sends socket buffered messages -> continue sending remaining data
-            socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
-            if outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable
+            try:
+                socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
+            except ConnectionAbortedError:
+                outgoing_msg_dict.pop(socket)
+                writable_socket_list.remove(socket)
+            if socket in outgoing_msg_dict and outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable (We check again if socket in outgoing_msg_dict in case of ConnectionAbortedError)
                 outgoing_msg_dict.pop(socket)
                 writable_socket_list.remove(socket)
                 if socket in disconnected_socket_set: # if socket is not disconnected -> server expects to receive data from socket after writing to it, therefore turn socket readable
