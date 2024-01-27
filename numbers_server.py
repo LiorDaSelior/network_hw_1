@@ -27,12 +27,19 @@ else:
     raise AttributeError("Server set up failed - Arguments are invalid")
 
 listener_socket = sk.socket(sk.AF_INET, sk.SOCK_STREAM)
-listener_socket.bind((HOST, port))
-listener_socket.listen()
+
+try:
+    listener_socket.bind((HOST, port))
+    listener_socket.listen()
+except OSError as exception:
+    print(exception.strerror)
+    print("Error in listening socket setup, shutting down server program.")
+    exit()
+
 readable_socket_list = [listener_socket]
 writable_socket_list = []
 
-def handle_connection_error(target_socket: sk.socket):
+def handle_socket_error(target_socket: sk.socket):
     if target_socket in readable_socket_list:
         readable_socket_list.remove(target_socket)
     if target_socket in writable_socket_list:
@@ -59,15 +66,26 @@ def send_msg(target_socket: sk.socket, msg: str): # Send str msg to socket - add
     outgoing_msg_dict[target_socket] = sk_msg
     try:
         target_socket.send(sk_msg.size.to_bytes(4, 'big'))
-    except (ConnectionAbortedError, ConnectionResetError):
-        handle_connection_error(target_socket)
+    except OSError as exception:
+        handle_socket_error(target_socket)
+        if exception.errno == errno.ECONNRESET:
+            pass
+        else:
+            print(exception.strerror)
         
 def recv_msg(source_socket: sk.socket): # Get str msg from socket - add msg to data struct and begin receiving buffer. Return False <=> recv size is 0. Socket must be readable
+    size = 0
     try:
         size_in_bytes = source_socket.recv(4)
-    except (ConnectionAbortedError, ConnectionResetError):
-        handle_connection_error(source_socket)
-    size = int.from_bytes(size_in_bytes, "big")
+        size = int.from_bytes(size_in_bytes, "big")
+    except OSError as exception:
+        handle_socket_error(source_socket)
+        if exception.errno == errno.ECONNRESET:
+            pass
+        else:
+            print(exception.strerror)
+        return True
+
     if size == 0:
         return False
     sk_msg = ns.IncomingSocketMessage(size)
@@ -86,8 +104,12 @@ while True:
             if not incoming_msg_dict[socket].is_complete():
                 try:
                     incoming_msg_dict[socket].add_data(socket.recv(DATA_BANDWIDTH))
-                except (ConnectionAbortedError, ConnectionResetError):
-                    handle_connection_error(socket)
+                except OSError as exception:
+                    handle_socket_error(socket)
+                    if exception.errno == errno.ECONNRESET:
+                        pass
+                    else:
+                        print(exception.strerror)
                     
         if socket == listener_socket: # init. connection
             connect_socket, addr = listener_socket.accept()
@@ -137,8 +159,13 @@ while True:
         if socket in outgoing_msg_dict: # if server sends socket buffered messages -> continue sending remaining data
             try:
                 socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
-            except (ConnectionAbortedError, ConnectionResetError):
-                handle_connection_error(socket)
+            except OSError as exception:
+                handle_socket_error(socket)
+                if exception.errno == errno.ECONNRESET:
+                    pass
+                else:
+                    print(exception.strerror)
+                    
             if socket in outgoing_msg_dict and outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable. (We check again if socket in outgoing_msg_dict in case of Connection Error)
                 outgoing_msg_dict.pop(socket)
                 writable_socket_list.remove(socket)
