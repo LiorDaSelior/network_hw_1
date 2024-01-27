@@ -2,6 +2,7 @@ import numbers_service as ns
 import select as sl
 import socket as sk
 import sys
+import errno
 from typing import Dict, Set
 
 HOST = ""
@@ -25,14 +26,28 @@ elif  len(sys.argv) == 3:
 else:
     raise AttributeError("Server set up failed - Arguments are invalid")
 
-#try:
 listener_socket = sk.socket(sk.AF_INET, sk.SOCK_STREAM)
 listener_socket.bind((HOST, port))
 listener_socket.listen()
-#except: - #! TODO - Check for errors during socket creation
 readable_socket_list = [listener_socket]
 writable_socket_list = []
 
+def handle_connection_error(target_socket: sk.socket):
+    if target_socket in readable_socket_list:
+        readable_socket_list.remove(target_socket)
+    if target_socket in writable_socket_list:
+        writable_socket_list.remove(target_socket) 
+    if target_socket in logging_socket_set:
+        logging_socket_set.remove(target_socket) 
+    if target_socket in connected_socket_set:
+        connected_socket_set.remove(target_socket) 
+    if target_socket in disconnected_socket_set:
+        disconnected_socket_set.remove(target_socket) 
+    if target_socket in incoming_msg_dict:
+        incoming_msg_dict.pop(target_socket)
+    if target_socket in outgoing_msg_dict:
+        outgoing_msg_dict.pop(target_socket)
+    target_socket.close()
 
 # shorthand functions for repeating methods
 def send_msg(target_socket: sk.socket, msg: str): # Send str msg to socket - add msg to data struct and begin sending buffer
@@ -42,10 +57,16 @@ def send_msg(target_socket: sk.socket, msg: str): # Send str msg to socket - add
         writable_socket_list.append(target_socket) 
     sk_msg = ns.OutgoingSocketMessage(msg)
     outgoing_msg_dict[target_socket] = sk_msg
-    target_socket.send(sk_msg.size.to_bytes(4, 'big'))
+    try:
+        target_socket.send(sk_msg.size.to_bytes(4, 'big'))
+    except (ConnectionAbortedError, ConnectionResetError):
+        handle_connection_error(target_socket)
         
 def recv_msg(source_socket: sk.socket): # Get str msg from socket - add msg to data struct and begin receiving buffer. Return False <=> recv size is 0. Socket must be readable
-    size_in_bytes = source_socket.recv(4)
+    try:
+        size_in_bytes = source_socket.recv(4)
+    except (ConnectionAbortedError, ConnectionResetError):
+        handle_connection_error(source_socket)
     size = int.from_bytes(size_in_bytes, "big")
     if size == 0:
         return False
@@ -63,8 +84,11 @@ while True:
     for socket in readable: 
         if socket in incoming_msg_dict: # if currently receiving buffered message from the socket -> add received data to data struct
             if not incoming_msg_dict[socket].is_complete():
-                incoming_msg_dict[socket].add_data(socket.recv(DATA_BANDWIDTH))
-        
+                try:
+                    incoming_msg_dict[socket].add_data(socket.recv(DATA_BANDWIDTH))
+                except (ConnectionAbortedError, ConnectionResetError):
+                    handle_connection_error(socket)
+                    
         if socket == listener_socket: # init. connection
             connect_socket, addr = listener_socket.accept()
             logging_socket_set.add(connect_socket) # init. login process. When sending welcome msg, turns connection socket to writable
@@ -113,10 +137,9 @@ while True:
         if socket in outgoing_msg_dict: # if server sends socket buffered messages -> continue sending remaining data
             try:
                 socket.send(outgoing_msg_dict[socket].get_data(DATA_BANDWIDTH))
-            except ConnectionAbortedError:
-                outgoing_msg_dict.pop(socket)
-                writable_socket_list.remove(socket)
-            if socket in outgoing_msg_dict and outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable (We check again if socket in outgoing_msg_dict in case of ConnectionAbortedError)
+            except (ConnectionAbortedError, ConnectionResetError):
+                handle_connection_error(socket)
+            if socket in outgoing_msg_dict and outgoing_msg_dict[socket].is_complete(): # if msg is fully sent -> delete from data struct. Remove socket from writable. (We check again if socket in outgoing_msg_dict in case of Connection Error)
                 outgoing_msg_dict.pop(socket)
                 writable_socket_list.remove(socket)
                 if socket in disconnected_socket_set: # if socket is not disconnected -> server expects to receive data from socket after writing to it, therefore turn socket readable
