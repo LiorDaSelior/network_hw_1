@@ -130,9 +130,9 @@ def execute(cmd): # Assumption: Command and it's arguments are valid, because us
     return res
 
 def check_cmd_argument_amount(cmd): # check arguments format correctness
-    if cmd == "quit":
-        return
     cmd_arr = cmd.split(": ")
+    if len(cmd_arr) == 1:
+        return
     cmd_name = cmd_arr[0]
     cmd_args = ((cmd_arr[1])).split(" ")
     check_dict = {"calculate": 3, "is_palindrome": 1, "is_prime": 1}
