@@ -113,9 +113,15 @@ while True:
                         print(exception.strerror)
                     
         if socket == listener_socket: # init. connection
-            connect_socket, addr = listener_socket.accept()
-            logging_socket_set.add(connect_socket) # init. login process.
-            send_msg(connect_socket, "Welcome! Please log in.")
+            error_flag = False
+            try:
+                connect_socket, addr = listener_socket.accept()
+            except OSError as exception:
+                print(exception.strerror)
+                error_flag = True
+            if not error_flag:
+                logging_socket_set.add(connect_socket) # init. login process.
+                send_msg(connect_socket, "Welcome! Please log in.")
             
         elif socket in logging_socket_set: # if socket in login process -> recv login credentials data
             if socket in incoming_msg_dict:
