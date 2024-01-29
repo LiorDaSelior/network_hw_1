@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import numbers_service as ns
 import socket as sk
 import sys

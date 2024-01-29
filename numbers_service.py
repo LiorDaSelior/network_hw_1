@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 # classes and methods of message handling:
 class SocketMessage():
     def __init__(self, size: int, data: bytes) -> None:
